@@ -6,6 +6,7 @@ class bcolors:
     OKGREEN = '\033[92m'
     FAIL = '\033[91m'
     ENDC = '\033[0m'
+    HEADER = '\033[95m'
 
 class HackTestResult:
   def __init__(self, number, execution_time, passed, actual_output, expected_output, error_message=None):
@@ -95,6 +96,8 @@ class HackTest:
 
     for i in range(num_workers):
       tasks.put(None)
+
+    print("{0}Running {1} testcases{2}".format(bcolors.HEADER, len(self.test_cases), bcolors.ENDC))
 
     tasks.join()
     results_list = []
