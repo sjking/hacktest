@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-import sys, os, optparse, subprocess, multiprocessing, re, time
+import sys, os, optparse, subprocess, multiprocessing, re, time, threading, itertools
 
 class bcolors:
     OKGREEN = '\033[92m'
@@ -19,10 +19,14 @@ class HackTestResult:
 
   def __str__(self):
     if self.passed:
-      return bcolors.OKGREEN + "Test {0} Passed in {1:.2f} seconds".format(self.number, self.execution_time) + bcolors.ENDC
+      return bcolors.OKGREEN + "\u2713" + "  Test {0} Passed in {1:.2f} seconds".format(self.number, self.execution_time) + bcolors.ENDC
     else:
-      failed_string = bcolors.FAIL + "Testcase {0} failed:\n\texpected output: {1}\n\tactual output: {2}\n\terror: {3}" + bcolors.ENDC
-      return failed_string.format(self.number, self.expected_output, self.actual_output, self.error_message)
+      if self.error_message:
+        failed_string = bcolors.FAIL + "\u2717" +"  Test {0} failed with error: {1}" + bcolors.ENDC
+        return failed_string.format(self.number, self.error_message)
+      else:
+        failed_string = bcolors.FAIL + "\u2717" + "  Test {0} failed." + bcolors.ENDC
+        return failed_string.format(self.number)
 
   __repr__ = __str__
 
@@ -65,6 +69,10 @@ class HackTestWorker(multiprocessing.Process):
         print("Error", file=sys.stderr)
         break
 
+class Signal:
+    go = True
+    results = []
+
 class HackTest:
   def __init__(self, executable, opts=None):
     self.executable = executable
@@ -82,6 +90,18 @@ class HackTest:
       sys.exit(1)
     self.test_cases = [t for t in zip(input_files, output_files)]
 
+  def spin(self, msg, signal):
+    write, flush = sys.stdout.write, sys.stdout.flush
+    for char in itertools.cycle('|/-\\'):
+      status = "".join(signal.results) + char + bcolors.ENDC + ' ' + msg
+      write(status)
+      flush()
+      write(bcolors.HEADER + '\x08' * len(status))
+      time.sleep(.1)
+      if not signal.go:
+          break
+    write(' ' * len(status) + '\x08' * len(status))
+
   def run_all_tests(self):
     tasks = multiprocessing.JoinableQueue()
     results = multiprocessing.Queue()
@@ -98,27 +118,33 @@ class HackTest:
       tasks.put(None)
 
     print("{0}Running {1} testcases{2}".format(bcolors.HEADER, len(self.test_cases), bcolors.ENDC))
+    
+    signal = Signal()
+    spinner = threading.Thread(target=self.spin, args=('', signal))
+    spinner.start()
 
-    tasks.join()
     results_list = []
+    passed = 0
+    failed = 0
     for i in range(len(self.test_cases)):
       result = results.get()
-      results_list.append(result)
-
-    self.process_results(results_list) 
-
-  def process_results(self, results):
-    results.sort(key=lambda result: result.number)
-    passed = failed = 0
-    for result in results:
       if result.passed:
-        passed += 1
+        signal.results.append(bcolors.OKGREEN + ".")
+        sys.stdout.flush()
         print(result)
       else:
-        print(result, file=sys.stderr)
-        failed += 1
+        signal.results.append(bcolors.FAIL + ".")
+        sys.stdout.flush()
+        print(result)
+      results_list.append(result)        
+
+    tasks.join()
+    signal.go = False
+    spinner.join()
+
     summary = "{0}{1} Pass, {2}{3} Fail.{4}".format(bcolors.OKGREEN, passed, bcolors.FAIL, failed, bcolors.ENDC)
     print(summary)
+    return failed # return value
 
 def usage(program):
   print("Usage: {0} {1}".format(program, "<test_program>"), file=sys.stderr)
@@ -128,7 +154,8 @@ if __name__ == '__main__':
     executable = sys.argv[1]
     test = HackTest(executable)
     test.setup()
-    test.run_all_tests()
+    ret = test.run_all_tests()
+    sys.exit(ret)
   except IndexError:
     usage(sys.argv[0])
     sys.exit(1)
